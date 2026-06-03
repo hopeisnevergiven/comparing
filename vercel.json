@@ -1,10 +1,10 @@
 {
   "functions": {
-    "api/proxy.py": {
-      "runtime": "vercel-python@0.1.1",
+    "api/*.py": {
       "maxDuration": 10
     }
   },
   "rewrites": [
     { "source": "/api/proxy", "destination": "/api/proxy.py" }
   ]
+}
