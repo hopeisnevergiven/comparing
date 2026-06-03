@@ -1,11 +1,3 @@
-"""
-Vercel Python Serverless Function
-Proxies requests to www.ravenkog.com from the browser.
-
-Deployed automatically by Vercel when pushed to GitHub.
-Accessible at:  https://your-project.vercel.app/api/proxy?url=...
-"""
-
 from http.server import BaseHTTPRequestHandler
 from urllib.parse import parse_qs, urlparse, unquote
 import requests
