@@ -1,18 +1,9 @@
-"""
-Vercel Python Serverless Function
-Proxies requests to www.ravenkog.com from the browser.
-
-Deployed automatically by Vercel when pushed to GitHub.
-Accessible at:  https://your-project.vercel.app/api/proxy?url=...
-"""
-
-from http.server import BaseHTTPRequestHandler
 from urllib.parse import parse_qs, urlparse, unquote
 import requests
 import json
 
-ALLOWED_HOST = "www.ravenkog.com"
-TIMEOUT      = 9   # Vercel Hobby plan caps at 10 s — keep this under
+ALLOWED_HOST = "://ravenkog.com"
+TIMEOUT      = 8  # تقليله لضمان عدم تجاوز حد الخطة المجانية لـ Vercel
 
 FORWARD_HEADERS = {
     "User-Agent": (
@@ -25,57 +16,63 @@ FORWARD_HEADERS = {
     "Referer":         f"https://{ALLOWED_HOST}/",
 }
 
+# هذا الهيكل المطور والمتوافق مع بيئة Vercel Serverless لـ Python
+def handler(request):
+    # إعداد ترويسات الاستجابة الافتراضية لمنع مشاكل الـ CORS
+    cors_headers = {
+        "Access-Control-Allow-Origin": "*",
+        "Access-Control-Allow-Methods": "GET, OPTIONS",
+        "Access-Control-Allow-Headers": "Content-Type",
+    }
 
-class handler(BaseHTTPRequestHandler):
+    # التعامل مع طلبات الـ OPTIONS (CORS preflight)
+    if request.method == "OPTIONS":
+        return {"statusCode": 200, "headers": cors_headers, "body": ""}
 
-    def log_message(self, format, *args):
-        pass  # suppress default stdout logs on Vercel
+    # التأكد من أن الطلب من نوع GET فقط
+    if request.method != "GET":
+        return {
+            "statusCode": 405,
+            "headers": cors_headers,
+            "body": json.dumps({"error": "Method not allowed"})
+        }
 
-    # ── helpers ───────────────────────────────────────────────────────────────
+    # استخراج الرابط المطلوب من المعاملات (Query Parameters)
+    query_params = parse_qs(urlparse(request.path).query)
+    url = unquote(query_params.get("url", [""])[0]).strip()
 
-    def _send(self, code, body: bytes, mime="application/json"):
-        self.send_response(code)
-        self.send_header("Content-Type", mime)
-        self.send_header("Access-Control-Allow-Origin",  "*")
-        self.send_header("Access-Control-Allow-Methods", "GET, OPTIONS")
-        self.send_header("Access-Control-Allow-Headers", "Content-Type")
-        self.send_header("Content-Length", str(len(body)))
-        self.end_headers()
-        self.wfile.write(body)
+    # التحقق من وجود الرابط وصحته
+    if not url:
+        return {
+            "statusCode": 400,
+            "headers": cors_headers,
+            "body": json.dumps({"error": "Missing ?url= parameter"})
+        }
 
-    def _error(self, code, msg):
-        self._send(code, json.dumps({"error": msg}).encode())
+    if urlparse(url).netloc != ALLOWED_HOST:
+        return {
+            "statusCode": 403,
+            "headers": cors_headers,
+            "body": json.dumps({"error": f"Only {ALLOWED_HOST} URLs are allowed"})
+        }
 
-    # ── CORS preflight ────────────────────────────────────────────────────────
+    # إرسال الطلب الفعلي إلى الموقع المستهدف
+    try:
+        resp = requests.get(url, headers=FORWARD_HEADERS, timeout=TIMEOUT)
+        
+        # دمج ترويسات CORS مع الترويسة القادمة من الموقع المستهدف
+        response_headers = cors_headers.copy()
+        response_headers["Content-Type"] = resp.headers.get("Content-Type", "application/json")
+        
+        return {
+            "statusCode": resp.status_code,
+            "headers": response_headers,
+            "body": resp.text
+        }
 
-    def do_OPTIONS(self):
-        self._send(200, b"")
-
-    # ── Main handler ──────────────────────────────────────────────────────────
-
-    def do_GET(self):
-        # Parse ?url= from query string
-        params = parse_qs(urlparse(self.path).query)
-        url    = unquote(params.get("url", [""])[0]).strip()
-
-        # Validate
-        if not url:
-            return self._error(400, "Missing ?url= parameter")
-
-        if urlparse(url).netloc != ALLOWED_HOST:
-            return self._error(403, f"Only {ALLOWED_HOST} URLs are allowed")
-
-        # Forward to ravenkog.com
-        try:
-            resp  = requests.get(url, headers=FORWARD_HEADERS, timeout=TIMEOUT)
-            ctype = resp.headers.get("Content-Type", "application/json")
-            self._send(resp.status_code, resp.content, ctype)
-
-        except requests.Timeout:
-            self._error(504, "ravenkog.com timed out")
-
-        except requests.ConnectionError:
-            self._error(502, "Could not reach ravenkog.com")
-
-        except Exception as exc:
-            self._error(500, str(exc))
+    except requests.Timeout:
+        return {"statusCode": 504, "headers": cors_headers, "body": json.dumps({"error": "ravenkog.com timed out"})}
+    except requests.ConnectionError:
+        return {"statusCode": 502, "headers": cors_headers, "body": json.dumps({"error": "Could not reach ravenkog.com"})}
+    except Exception as exc:
+        return {"statusCode": 500, "headers": cors_headers, "body": json.dumps({"error": str(exc)})}
